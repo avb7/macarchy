@@ -1,0 +1,1184 @@
+#!/bin/bash
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║                           MACARCHY CLI                                    ║
+# ║                 Tiling Desktop Environment for macOS                      ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+
+set -e
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+MACARCHY_DIR="${MACARCHY_DIR:-$HOME/.macarchy}"
+VERSION=$(cat "$MACARCHY_DIR/VERSION" 2>/dev/null || echo "1.0.0")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COLORS & STYLING
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Base terminal colors
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_DIM='\033[2m'
+C_ITALIC='\033[3m'
+C_UNDER='\033[4m'
+
+C_BLACK='\033[30m'
+C_RED='\033[31m'
+C_GREEN='\033[32m'
+C_YELLOW='\033[33m'
+C_BLUE='\033[34m'
+C_MAGENTA='\033[35m'
+C_CYAN='\033[36m'
+C_WHITE='\033[37m'
+
+C_BG_BLACK='\033[40m'
+C_BG_RED='\033[41m'
+C_BG_GREEN='\033[42m'
+
+# Bright colors
+C_BRIGHT_BLACK='\033[90m'
+C_BRIGHT_RED='\033[91m'
+C_BRIGHT_GREEN='\033[92m'
+C_BRIGHT_YELLOW='\033[93m'
+C_BRIGHT_BLUE='\033[94m'
+C_BRIGHT_MAGENTA='\033[95m'
+C_BRIGHT_CYAN='\033[96m'
+C_BRIGHT_WHITE='\033[97m'
+
+# Convert hex color (0xffRRGGBB or #RRGGBB) to ANSI true color escape sequence
+hex_to_ansi() {
+    local hex="$1"
+    # Remove 0xff prefix or # prefix
+    hex="${hex#0xff}"
+    hex="${hex#\#}"
+    # Extract RGB components
+    local r=$((16#${hex:0:2}))
+    local g=$((16#${hex:2:2}))
+    local b=$((16#${hex:4:2}))
+    echo "\033[38;2;${r};${g};${b}m"
+}
+
+# Load theme accent colors dynamically
+load_theme_colors() {
+    if [[ -f "$MACARCHY_DIR/config/theme.sh" ]]; then
+        source "$MACARCHY_DIR/config/theme.sh" 2>/dev/null || true
+        if [[ -n "$ACCENT" ]]; then
+            C_ACCENT=$(hex_to_ansi "$ACCENT")
+        fi
+        if [[ -n "$ACCENT_DIM" ]]; then
+            C_ACCENT_DIM=$(hex_to_ansi "$ACCENT_DIM")
+        fi
+    fi
+}
+
+# Default fallback (orange) - will be overwritten by theme
+C_ACCENT='\033[38;5;208m'
+C_ACCENT_DIM='\033[38;5;94m'
+
+# Load current theme colors
+load_theme_colors
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ASCII ART
+# ─────────────────────────────────────────────────────────────────────────────
+
+print_logo() {
+    echo ""
+    echo -e "${C_ACCENT}    __  ___                           __         ${C_RESET}"
+    echo -e "${C_ACCENT}   /  |/  /___ __________ ___________/ /_  __  __${C_RESET}"
+    echo -e "${C_ACCENT}  / /|_/ / __ \`/ ___/ __ \`/ ___/ ___/ __ \\/ / / /${C_RESET}"
+    echo -e "${C_ACCENT} / /  / / /_/ / /__/ /_/ / /  / /__/ / / / /_/ / ${C_RESET}"
+    echo -e "${C_ACCENT}/_/  /_/\\__,_/\\___/\\__,_/_/   \\___/_/ /_/\\__, /  ${C_RESET}"
+    echo -e "${C_ACCENT}                                        /____/   ${C_RESET}"
+    echo -e "${C_DIM}           Tiling Desktop Environment v${VERSION}${C_RESET}"
+    echo ""
+}
+
+print_logo_small() {
+    echo -e "${C_ACCENT}${C_BOLD}◆ Macarchy${C_RESET} ${C_DIM}v${VERSION}${C_RESET}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI COMPONENTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Box drawing
+BOX_TL="╭"
+BOX_TR="╮"
+BOX_BL="╰"
+BOX_BR="╯"
+BOX_H="─"
+BOX_V="│"
+
+draw_box_top() {
+    local width=${1:-60}
+    echo -ne "${C_DIM}${BOX_TL}"
+    printf '%*s' "$width" | tr ' ' "$BOX_H"
+    echo -e "${BOX_TR}${C_RESET}"
+}
+
+draw_box_bottom() {
+    local width=${1:-60}
+    echo -ne "${C_DIM}${BOX_BL}"
+    printf '%*s' "$width" | tr ' ' "$BOX_H"
+    echo -e "${BOX_BR}${C_RESET}"
+}
+
+draw_box_line() {
+    local content="$1"
+    local width=${2:-60}
+    local padding=$((width - ${#content} - 2))
+    echo -e "${C_DIM}${BOX_V}${C_RESET} ${content}$(printf '%*s' "$padding" '')${C_DIM}${BOX_V}${C_RESET}"
+}
+
+# Status indicators
+status_dot() {
+    local status="$1"
+    if [[ "$status" == "running" ]] || [[ "$status" == "true" ]] || [[ "$status" == "on" ]]; then
+        echo -e "${C_GREEN}●${C_RESET}"
+    else
+        echo -e "${C_RED}○${C_RESET}"
+    fi
+}
+
+# Progress spinner
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    while ps -p $pid &>/dev/null; do
+        local temp=${spinstr#?}
+        printf " ${C_ACCENT}%c${C_RESET}" "$spinstr"
+        spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b"
+    done
+    printf "  \b\b"
+}
+
+# Messages
+msg_info()    { echo -e "${C_BLUE}${C_BOLD}ℹ${C_RESET}  $1"; }
+msg_success() { echo -e "${C_GREEN}${C_BOLD}✓${C_RESET}  $1"; }
+msg_warn()    { echo -e "${C_YELLOW}${C_BOLD}⚠${C_RESET}  $1"; }
+msg_error()   { echo -e "${C_RED}${C_BOLD}✗${C_RESET}  $1"; }
+msg_step()    { echo -e "${C_DIM}   →${C_RESET} $1"; }
+
+# Section header
+section() {
+    echo ""
+    echo -e "${C_BOLD}${C_WHITE}$1${C_RESET}"
+    echo -e "${C_DIM}$(printf '%.s─' {1..40})${C_RESET}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODULE SYSTEM
+# ─────────────────────────────────────────────────────────────────────────────
+
+MODULES_DIR="$MACARCHY_DIR/modules"
+
+# Get list of all modules
+get_modules() {
+    for dir in "$MODULES_DIR"/*/; do
+        [[ -f "$dir/module.sh" ]] && basename "$dir"
+    done
+}
+
+# Load a module's functions
+load_module() {
+    local module="$1"
+    local module_file="$MODULES_DIR/$module/module.sh"
+    
+    if [[ -f "$module_file" ]]; then
+        source "$module_file"
+        return 0
+    fi
+    return 1
+}
+
+# Check if module is enabled in settings
+module_enabled() {
+    local module="$1"
+    source "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+    
+    local var_name="MODULE_$(echo "$module" | tr '[:lower:]' '[:upper:]')"
+    local value="${!var_name:-true}"
+    [[ "$value" == "true" ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: status
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_status() {
+    print_logo_small
+    section "Module Status"
+    
+    printf "  ${C_DIM}%-15s %-10s %-20s${C_RESET}\n" "MODULE" "STATUS" "VERSION"
+    echo -e "  ${C_DIM}$(printf '%.s─' {1..45})${C_RESET}"
+    
+    for module in $(get_modules); do
+        if load_module "$module"; then
+            local status=$(module_status)
+            local version=$(module_version)
+            local dot=$(status_dot "$status")
+            
+            printf "  %-15s %s %-8s ${C_DIM}%s${C_RESET}\n" \
+                "$module" "$dot" "$status" "$version"
+        fi
+    done
+    
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: start
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_start() {
+    local target="${1:-all}"
+    
+    print_logo_small
+    section "Starting Services"
+    
+    if [[ "$target" == "all" ]]; then
+        for module in $(get_modules); do
+            if module_enabled "$module" && load_module "$module"; then
+                echo -ne "  Starting ${C_BOLD}$module${C_RESET}..."
+                module_start
+                echo -e " ${C_GREEN}✓${C_RESET}"
+            fi
+        done
+    else
+        if load_module "$target"; then
+            echo -ne "  Starting ${C_BOLD}$target${C_RESET}..."
+            module_start
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        else
+            msg_error "Module not found: $target"
+            return 1
+        fi
+    fi
+    
+    echo ""
+    msg_success "Services started"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: stop
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_stop() {
+    local target="${1:-all}"
+    
+    print_logo_small
+    section "Stopping Services"
+    
+    if [[ "$target" == "all" ]]; then
+        for module in $(get_modules); do
+            if load_module "$module"; then
+                echo -ne "  Stopping ${C_BOLD}$module${C_RESET}..."
+                module_stop
+                echo -e " ${C_GREEN}✓${C_RESET}"
+            fi
+        done
+    else
+        if load_module "$target"; then
+            echo -ne "  Stopping ${C_BOLD}$target${C_RESET}..."
+            module_stop
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        else
+            msg_error "Module not found: $target"
+            return 1
+        fi
+    fi
+    
+    echo ""
+    msg_success "Services stopped"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: restart
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_restart() {
+    local target="${1:-all}"
+    cmd_stop "$target" 2>/dev/null
+    sleep 1
+    cmd_start "$target"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: apply
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_apply() {
+    print_logo_small
+    section "Applying Configuration"
+    
+    # Source configs
+    source "$MACARCHY_DIR/config/theme.sh" 2>/dev/null || true
+    source "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+    
+    for module in $(get_modules); do
+        if module_enabled "$module" && load_module "$module"; then
+            echo -ne "  Applying to ${C_BOLD}$module${C_RESET}..."
+            module_apply_theme
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        fi
+    done
+    
+    section "Reloading Services"
+    
+    for module in $(get_modules); do
+        if module_enabled "$module" && load_module "$module"; then
+            echo -ne "  Reloading ${C_BOLD}$module${C_RESET}..."
+            module_reload
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        fi
+    done
+    
+    echo ""
+    msg_success "Configuration applied!"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WALLPAPER HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+WALLPAPERS_DIR="$MACARCHY_DIR/wallpapers"
+
+# Find wallpaper file for a theme (supports jpg, png, heic)
+find_wallpaper() {
+    local theme_name="$1"
+    for ext in jpg jpeg png heic; do
+        local path="$WALLPAPERS_DIR/${theme_name}.${ext}"
+        if [[ -f "$path" ]]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Set desktop wallpaper on ALL spaces/desktops with "Fill Screen" scaling
+set_wallpaper() {
+    local wallpaper_path="$1"
+    
+    if [[ ! -f "$wallpaper_path" ]]; then
+        return 1
+    fi
+    
+    # Get absolute path
+    wallpaper_path="$(cd "$(dirname "$wallpaper_path")" && pwd)/$(basename "$wallpaper_path")"
+    
+    # Use AppleScript to set wallpaper on ALL screens with "Fill Screen" mode
+    # NSImageScaleProportionallyUpOrDown (1) + AllowClipping (true) = Fill Screen
+    osascript <<EOF
+use framework "AppKit"
+use framework "Foundation"
+
+set theImage to "$wallpaper_path"
+set theWorkspace to current application's NSWorkspace's sharedWorkspace()
+set theScreens to current application's NSScreen's screens()
+
+-- Create options dictionary for "Fill Screen" mode
+-- Key 1: Scaling = NSImageScaleProportionallyUpOrDown (value 1)
+-- Key 2: AllowClipping = true (enables fill/crop behavior)
+set scalingKey to current application's NSWorkspaceDesktopImageScalingKey
+set clippingKey to current application's NSWorkspaceDesktopImageAllowClippingKey
+
+set theOptions to current application's NSDictionary's dictionaryWithObjects:{1, true} forKeys:{scalingKey, clippingKey}
+set theURL to current application's NSURL's fileURLWithPath:theImage
+
+repeat with aScreen in theScreens
+    theWorkspace's setDesktopImageURL:theURL forScreen:aScreen options:theOptions |error|:(missing value)
+end repeat
+EOF
+    
+    return 0
+}
+
+# Get current wallpaper
+get_current_wallpaper() {
+    osascript -e 'tell application "System Events" to get picture of desktop 1' 2>/dev/null
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: wallpaper
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_wallpaper() {
+    local action="${1:-list}"
+    
+    case "$action" in
+        list)
+            print_logo_small
+            section "Available Wallpapers"
+            
+            local current=$(get_current_wallpaper)
+            local found=false
+            
+            # Find all wallpaper files
+            while IFS= read -r -d '' wallpaper; do
+                if [[ -f "$wallpaper" ]]; then
+                    found=true
+                    local name=$(basename "$wallpaper")
+                    local theme_name="${name%.*}"
+                    
+                    if [[ "$wallpaper" == "$current" ]]; then
+                        echo -e "  ${C_GREEN}●${C_RESET} ${C_BOLD}$theme_name${C_RESET} ${C_DIM}(active)${C_RESET}"
+                    else
+                        echo -e "  ${C_DIM}○${C_RESET} $theme_name"
+                    fi
+                fi
+            done < <(find "$WALLPAPERS_DIR" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.heic" \) -print0 2>/dev/null)
+            
+            if [[ "$found" == false ]]; then
+                echo -e "  ${C_DIM}No wallpapers found${C_RESET}"
+                echo ""
+                echo -e "  ${C_DIM}Add wallpapers to: ${C_RESET}~/.macarchy/wallpapers/"
+                echo -e "  ${C_DIM}Name them to match themes (e.g., nord.jpg)${C_RESET}"
+            fi
+            
+            echo ""
+            echo -e "  ${C_DIM}Usage: ${C_RESET}macarchy wallpaper ${C_UNDER}<name>${C_RESET}"
+            echo -e "  ${C_DIM}       ${C_RESET}macarchy wallpaper ${C_UNDER}<path>${C_RESET}"
+            echo ""
+            ;;
+            
+        current)
+            local current=$(get_current_wallpaper)
+            if [[ -n "$current" ]]; then
+                echo -e "  Current wallpaper: ${C_BOLD}$current${C_RESET}"
+            else
+                echo -e "  ${C_DIM}Could not determine current wallpaper${C_RESET}"
+            fi
+            ;;
+            
+        auto)
+            local state="${2:-}"
+            case "$state" in
+                on|true|enable)
+                    sed -i '' 's/AUTO_WALLPAPER="false"/AUTO_WALLPAPER="true"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null
+                    msg_success "Auto-wallpaper enabled"
+                    ;;
+                off|false|disable)
+                    sed -i '' 's/AUTO_WALLPAPER="true"/AUTO_WALLPAPER="false"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null
+                    msg_success "Auto-wallpaper disabled"
+                    ;;
+                *)
+                    source "$MACARCHY_DIR/config/settings.sh" 2>/dev/null
+                    local status="${AUTO_WALLPAPER:-true}"
+                    echo -e "  Auto-wallpaper: $(status_dot "$status") $status"
+                    echo -e "  ${C_DIM}Usage: macarchy wallpaper auto <on|off>${C_RESET}"
+                    ;;
+            esac
+            ;;
+            
+        *)
+            local wallpaper_name="$action"
+            local wallpaper_path=""
+            
+            # Check if it's a full path
+            if [[ -f "$wallpaper_name" ]]; then
+                wallpaper_path="$wallpaper_name"
+            else
+                # Try to find by theme name
+                wallpaper_path=$(find_wallpaper "$wallpaper_name")
+            fi
+            
+            if [[ -z "$wallpaper_path" ]] || [[ ! -f "$wallpaper_path" ]]; then
+                msg_error "Wallpaper not found: $wallpaper_name"
+                echo ""
+                echo -e "  Run ${C_BOLD}macarchy wallpaper list${C_RESET} to see available wallpapers"
+                return 1
+            fi
+            
+            echo -ne "  Setting wallpaper..."
+            if set_wallpaper "$wallpaper_path"; then
+                echo -e " ${C_GREEN}✓${C_RESET}"
+                msg_success "Wallpaper applied!"
+            else
+                echo -e " ${C_RED}✗${C_RESET}"
+                msg_error "Failed to set wallpaper"
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: theme
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_theme() {
+    local action="${1:-list}"
+    local themes_dir="$MACARCHY_DIR/themes"
+    local current_theme="$MACARCHY_DIR/config/theme.sh"
+    
+    case "$action" in
+        list)
+            print_logo_small
+            section "Available Themes"
+            
+            for theme_file in "$themes_dir"/*.sh; do
+                if [[ -f "$theme_file" ]]; then
+                    local name
+                    name=$(basename "$theme_file" .sh)
+                    
+                    # Check if this is the current theme
+                    if diff -q "$theme_file" "$current_theme" &>/dev/null 2>&1; then
+                        echo -e "  ${C_GREEN}●${C_RESET} ${C_BOLD}$name${C_RESET} ${C_DIM}(active)${C_RESET}"
+                    else
+                        echo -e "  ${C_DIM}○${C_RESET} $name"
+                    fi
+                fi
+            done
+            
+            echo ""
+            echo -e "  ${C_DIM}Usage: ${C_RESET}macarchy theme ${C_UNDER}<name>${C_RESET}"
+            echo ""
+            ;;
+            
+        *)
+            local theme_name="$action"
+            local theme_file="$themes_dir/${theme_name}.sh"
+            
+            if [[ ! -f "$theme_file" ]]; then
+                msg_error "Theme not found: $theme_name"
+                echo ""
+                echo -e "  Run ${C_BOLD}macarchy theme list${C_RESET} to see available themes"
+                return 1
+            fi
+            
+            print_logo_small
+            section "Switching Theme"
+            
+            echo -ne "  Loading ${C_BOLD}$theme_name${C_RESET}..."
+            cp "$theme_file" "$current_theme"
+            echo -e " ${C_GREEN}✓${C_RESET}"
+            
+            # Apply wallpaper if enabled and available
+            source "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+            if [[ "${AUTO_WALLPAPER:-true}" == "true" ]]; then
+                local wallpaper_path=$(find_wallpaper "$theme_name")
+                if [[ -n "$wallpaper_path" ]]; then
+                    echo -ne "  Setting wallpaper..."
+                    if set_wallpaper "$wallpaper_path"; then
+                        echo -e " ${C_GREEN}✓${C_RESET}"
+                    else
+                        echo -e " ${C_YELLOW}skipped${C_RESET}"
+                    fi
+                fi
+            fi
+            
+            # Apply immediately
+            cmd_apply
+            
+            echo ""
+            msg_success "Theme '${theme_name}' applied!"
+            ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: config
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_config() {
+    local action="${1:-show}"
+    
+    case "$action" in
+        show)
+            print_logo_small
+            section "Current Configuration"
+            
+            source "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+            source "$MACARCHY_DIR/config/theme.sh" 2>/dev/null || true
+            
+            echo -e "  ${C_BOLD}Modules${C_RESET}"
+            echo -e "    Aerospace:   $(status_dot $MODULE_AEROSPACE) ${MODULE_AEROSPACE:-true}"
+            echo -e "    SketchyBar:  $(status_dot $MODULE_SKETCHYBAR) ${MODULE_SKETCHYBAR:-true}"
+            echo -e "    Borders:     $(status_dot $MODULE_BORDERS) ${MODULE_BORDERS:-true}"
+            
+            echo ""
+            echo -e "  ${C_BOLD}Window Gaps${C_RESET}"
+            echo -e "    Inner: ${GAP_INNER_H:-10}x${GAP_INNER_V:-10}"
+            echo -e "    Outer: L${GAP_OUTER_LEFT:-15} R${GAP_OUTER_RIGHT:-15} B${GAP_OUTER_BOTTOM:-15}"
+            echo -e "    Top:   ${C_DIM}Laptop${C_RESET} ${GAP_OUTER_TOP_LAPTOP:-45} ${C_DIM}│${C_RESET} ${C_DIM}External${C_RESET} ${GAP_OUTER_TOP:-60}"
+            
+            echo ""
+            echo -e "  ${C_BOLD}Theme Colors${C_RESET}"
+            echo -e "    Accent:      ${C_ACCENT}████${C_RESET} $ACCENT"
+            echo -e "    Accent Dim:  ${C_ACCENT_DIM}████${C_RESET} $ACCENT_DIM"
+            echo -e "    Bar:         $BAR_COLOR"
+            
+            echo ""
+            echo -e "  ${C_BOLD}Borders${C_RESET}"
+            echo -e "    Width: ${BORDER_WIDTH:-5.0}px"
+            echo -e "    Style: ${BORDER_STYLE:-round}"
+            
+            echo ""
+            echo -e "  ${C_BOLD}Wallpaper${C_RESET}"
+            echo -e "    Auto-switch: $(status_dot "${AUTO_WALLPAPER:-true}") ${AUTO_WALLPAPER:-true}"
+            local current_wp=$(get_current_wallpaper 2>/dev/null)
+            if [[ -n "$current_wp" ]]; then
+                echo -e "    Current: ${C_DIM}$(basename "$current_wp")${C_RESET}"
+            fi
+            
+            echo ""
+            ;;
+            
+        edit)
+            local target="${2:-settings}"
+            local editor="${EDITOR:-${VISUAL:-nano}}"
+            
+            case "$target" in
+                settings) $editor "$MACARCHY_DIR/config/settings.sh" ;;
+                theme)    $editor "$MACARCHY_DIR/config/theme.sh" ;;
+                *)        $editor "$MACARCHY_DIR/config/$target.sh" 2>/dev/null || \
+                          $editor "$MACARCHY_DIR/config/settings.sh" ;;
+            esac
+            ;;
+            
+        *)
+            msg_error "Unknown config action: $action"
+            ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: doctor
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_doctor() {
+    print_logo_small
+    section "System Diagnostics"
+    
+    local issues=0
+    
+    echo -e "  ${C_BOLD}Dependencies${C_RESET}"
+    for module in $(get_modules); do
+        if load_module "$module"; then
+            if module_is_installed; then
+                local ver=$(module_version)
+                echo -e "    ${C_GREEN}✓${C_RESET} $module ${C_DIM}($ver)${C_RESET}"
+            else
+                echo -e "    ${C_RED}✗${C_RESET} $module ${C_DIM}not installed${C_RESET}"
+                ((issues++))
+            fi
+        fi
+    done
+    
+    echo ""
+    echo -e "  ${C_BOLD}Symlinks${C_RESET}"
+    
+    if [[ -L "$HOME/.aerospace.toml" ]]; then
+        echo -e "    ${C_GREEN}✓${C_RESET} ~/.aerospace.toml"
+    else
+        echo -e "    ${C_RED}✗${C_RESET} ~/.aerospace.toml ${C_DIM}not linked${C_RESET}"
+        ((issues++))
+    fi
+    
+    if [[ -L "$HOME/.config/sketchybar" ]]; then
+        echo -e "    ${C_GREEN}✓${C_RESET} ~/.config/sketchybar"
+    else
+        echo -e "    ${C_RED}✗${C_RESET} ~/.config/sketchybar ${C_DIM}not linked${C_RESET}"
+        ((issues++))
+    fi
+    
+    echo ""
+    echo -e "  ${C_BOLD}Configuration${C_RESET}"
+    
+    if [[ -f "$MACARCHY_DIR/config/theme.sh" ]]; then
+        echo -e "    ${C_GREEN}✓${C_RESET} theme.sh"
+    else
+        echo -e "    ${C_RED}✗${C_RESET} theme.sh ${C_DIM}missing${C_RESET}"
+        ((issues++))
+    fi
+    
+    if [[ -f "$MACARCHY_DIR/config/settings.sh" ]]; then
+        echo -e "    ${C_GREEN}✓${C_RESET} settings.sh"
+    else
+        echo -e "    ${C_RED}✗${C_RESET} settings.sh ${C_DIM}missing${C_RESET}"
+        ((issues++))
+    fi
+    
+    echo ""
+    echo -e "  ${C_BOLD}Services${C_RESET}"
+    for module in $(get_modules); do
+        if load_module "$module"; then
+            local status=$(module_status)
+            echo -e "    $(status_dot "$status") $module: $status"
+        fi
+    done
+    
+    echo ""
+    if [[ $issues -eq 0 ]]; then
+        msg_success "All checks passed!"
+    else
+        msg_warn "Found $issues issue(s)"
+        echo -e "  ${C_DIM}Run ${C_RESET}${C_BOLD}macarchy apply${C_RESET}${C_DIM} to fix configuration issues${C_RESET}"
+    fi
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: edit
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_edit() {
+    local target="${1:-}"
+    local editor="${EDITOR:-${VISUAL:-code}}"
+    
+    case "$target" in
+        ""|all)
+            $editor "$MACARCHY_DIR"
+            ;;
+        theme)
+            $editor "$MACARCHY_DIR/config/theme.sh"
+            ;;
+        settings|config)
+            $editor "$MACARCHY_DIR/config/settings.sh"
+            ;;
+        aerospace)
+            $editor "$MACARCHY_DIR/modules/aerospace/aerospace.toml"
+            ;;
+        sketchybar|bar)
+            $editor "$MACARCHY_DIR/modules/sketchybar"
+            ;;
+        *)
+            if [[ -d "$MACARCHY_DIR/modules/$target" ]]; then
+                $editor "$MACARCHY_DIR/modules/$target"
+            else
+                msg_error "Unknown target: $target"
+                echo -e "  ${C_DIM}Options: theme, settings, aerospace, sketchybar${C_RESET}"
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: help
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_help() {
+    print_logo
+    
+    draw_box_top 62
+    draw_box_line "${C_BOLD}USAGE${C_RESET}"
+    draw_box_line "  macarchy ${C_DIM}<command>${C_RESET} ${C_DIM}[options]${C_RESET}"
+    draw_box_bottom 62
+    
+    echo ""
+    echo -e "${C_BOLD}${C_WHITE}SERVICE COMMANDS${C_RESET}"
+    echo -e "  ${C_ACCENT}start${C_RESET} ${C_DIM}[module]${C_RESET}       Start services (all or specific)"
+    echo -e "  ${C_ACCENT}stop${C_RESET} ${C_DIM}[module]${C_RESET}        Stop services (all or specific)"
+    echo -e "  ${C_ACCENT}restart${C_RESET} ${C_DIM}[module]${C_RESET}     Restart services"
+    echo -e "  ${C_ACCENT}status${C_RESET}              Show status of all modules"
+    
+    echo ""
+    echo -e "${C_BOLD}${C_WHITE}CONFIGURATION${C_RESET}"
+    echo -e "  ${C_ACCENT}apply${C_RESET}               Apply config changes to all modules"
+    echo -e "  ${C_ACCENT}theme${C_RESET} ${C_DIM}[name]${C_RESET}         List themes or switch to theme"
+    echo -e "  ${C_ACCENT}wallpaper${C_RESET} ${C_DIM}[name]${C_RESET}     List or set wallpaper"
+    echo -e "  ${C_ACCENT}config${C_RESET}              Show current configuration"
+    echo -e "  ${C_ACCENT}config edit${C_RESET}         Edit settings in \$EDITOR"
+    echo -e "  ${C_ACCENT}edit${C_RESET} ${C_DIM}[target]${C_RESET}        Open config in editor"
+    
+    echo ""
+    echo -e "${C_BOLD}${C_WHITE}SYSTEM${C_RESET}"
+    echo -e "  ${C_ACCENT}system${C_RESET}              Show system preferences status"
+    echo -e "  ${C_ACCENT}system dock${C_RESET} ${C_DIM}<on|off>${C_RESET}  Toggle Dock auto-hide"
+    echo -e "  ${C_ACCENT}system menubar${C_RESET} ${C_DIM}<on|off>${C_RESET}  Toggle Menu Bar auto-hide"
+    echo -e "  ${C_ACCENT}system all${C_RESET} ${C_DIM}<on|off>${C_RESET}  Toggle both"
+    
+    echo ""
+    echo -e "${C_BOLD}${C_WHITE}MAINTENANCE${C_RESET}"
+    echo -e "  ${C_ACCENT}doctor${C_RESET}              Run diagnostics"
+    echo -e "  ${C_ACCENT}update${C_RESET}              Update Macarchy & dependencies"
+    echo -e "  ${C_ACCENT}reset${C_RESET}               Restore default configuration"
+    
+    echo ""
+    echo -e "${C_BOLD}${C_WHITE}INFORMATION${C_RESET}"
+    echo -e "  ${C_ACCENT}help${C_RESET}                Show this help"
+    echo -e "  ${C_ACCENT}version${C_RESET}             Show version"
+    
+    echo ""
+    echo -e "${C_DIM}─────────────────────────────────────────────────────────────${C_RESET}"
+    echo ""
+    echo -e "${C_BOLD}QUICK START${C_RESET}"
+    echo -e "  ${C_BRIGHT_BLACK}Opt + 1-9${C_RESET}           Switch workspace"
+    echo -e "  ${C_BRIGHT_BLACK}Opt + ←↓↑→${C_RESET}          Navigate windows"
+    echo -e "  ${C_BRIGHT_BLACK}Opt + Shift + ...${C_RESET}   Move windows"
+    echo -e "  ${C_BRIGHT_BLACK}Opt + Enter${C_RESET}         Open terminal"
+    
+    echo ""
+    echo -e "${C_DIM}Config: ~/.macarchy/${C_RESET}"
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: version
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_version() {
+    echo -e "${C_ACCENT}Macarchy${C_RESET} v${VERSION}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: system
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_system() {
+    local target="${1:-}"
+    local action="${2:-}"
+    
+    # Helper functions
+    dock_status() {
+        if defaults read com.apple.dock autohide 2>/dev/null | grep -q "1"; then
+            echo "on"
+        else
+            echo "off"
+        fi
+    }
+    
+    menubar_status() {
+        if defaults read NSGlobalDomain _HIHideMenuBar 2>/dev/null | grep -q "1"; then
+            echo "on"
+        else
+            echo "off"
+        fi
+    }
+    
+    case "$target" in
+        ""|show|status)
+            print_logo_small
+            section "System Preferences"
+            
+            local dock_state=$(dock_status)
+            local menubar_state=$(menubar_status)
+            
+            echo -e "  ${C_BOLD}Auto-hide${C_RESET}"
+            echo -e "    Dock:     $(status_dot "$dock_state") $dock_state"
+            echo -e "    Menu Bar: $(status_dot "$menubar_state") $menubar_state"
+            
+            echo ""
+            echo -e "  ${C_DIM}Usage:${C_RESET}"
+            echo -e "    macarchy system dock ${C_DIM}<on|off>${C_RESET}"
+            echo -e "    macarchy system menubar ${C_DIM}<on|off>${C_RESET}"
+            echo -e "    macarchy system all ${C_DIM}<on|off>${C_RESET}"
+            echo ""
+            ;;
+            
+        dock)
+            case "$action" in
+                on|true|enable)
+                    echo -ne "  Enabling Dock auto-hide..."
+                    defaults write com.apple.dock autohide -bool true
+                    defaults write com.apple.dock autohide-delay -float 0
+                    defaults write com.apple.dock autohide-time-modifier -float 0.3
+                    killall Dock 2>/dev/null || true
+                    # Update settings
+                    sed -i '' 's/AUTOHIDE_DOCK="false"/AUTOHIDE_DOCK="true"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    msg_success "Dock will auto-hide"
+                    ;;
+                off|false|disable)
+                    echo -ne "  Disabling Dock auto-hide..."
+                    defaults write com.apple.dock autohide -bool false
+                    defaults delete com.apple.dock autohide-delay 2>/dev/null || true
+                    defaults delete com.apple.dock autohide-time-modifier 2>/dev/null || true
+                    killall Dock 2>/dev/null || true
+                    # Update settings
+                    sed -i '' 's/AUTOHIDE_DOCK="true"/AUTOHIDE_DOCK="false"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    msg_success "Dock will stay visible"
+                    ;;
+                *)
+                    local state=$(dock_status)
+                    echo -e "  Dock auto-hide: $(status_dot "$state") $state"
+                    echo -e "  ${C_DIM}Usage: macarchy system dock <on|off>${C_RESET}"
+                    ;;
+            esac
+            ;;
+            
+        menubar|menu)
+            case "$action" in
+                on|true|enable)
+                    echo -ne "  Enabling Menu Bar auto-hide..."
+                    defaults write NSGlobalDomain _HIHideMenuBar -bool true
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    # Update settings
+                    sed -i '' 's/AUTOHIDE_MENUBAR="false"/AUTOHIDE_MENUBAR="true"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    msg_success "Menu bar will auto-hide"
+                    echo -e "  ${C_DIM}Note: May require logout to take effect${C_RESET}"
+                    ;;
+                off|false|disable)
+                    echo -ne "  Disabling Menu Bar auto-hide..."
+                    defaults write NSGlobalDomain _HIHideMenuBar -bool false
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    # Update settings
+                    sed -i '' 's/AUTOHIDE_MENUBAR="true"/AUTOHIDE_MENUBAR="false"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    msg_success "Menu bar will stay visible"
+                    echo -e "  ${C_DIM}Note: May require logout to take effect${C_RESET}"
+                    ;;
+                *)
+                    local state=$(menubar_status)
+                    echo -e "  Menu bar auto-hide: $(status_dot "$state") $state"
+                    echo -e "  ${C_DIM}Usage: macarchy system menubar <on|off>${C_RESET}"
+                    ;;
+            esac
+            ;;
+            
+        all)
+            case "$action" in
+                on|true|enable)
+                    print_logo_small
+                    section "Enabling Auto-hide"
+                    
+                    echo -ne "  Dock..."
+                    defaults write com.apple.dock autohide -bool true
+                    defaults write com.apple.dock autohide-delay -float 0
+                    defaults write com.apple.dock autohide-time-modifier -float 0.3
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    
+                    echo -ne "  Menu Bar..."
+                    defaults write NSGlobalDomain _HIHideMenuBar -bool true
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    
+                    killall Dock 2>/dev/null || true
+                    
+                    # Update settings
+                    sed -i '' 's/AUTOHIDE_DOCK="false"/AUTOHIDE_DOCK="true"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    sed -i '' 's/AUTOHIDE_MENUBAR="false"/AUTOHIDE_MENUBAR="true"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    
+                    echo ""
+                    msg_success "Auto-hide enabled for Dock and Menu Bar"
+                    echo -e "  ${C_DIM}Note: Menu bar may require logout${C_RESET}"
+                    ;;
+                off|false|disable)
+                    print_logo_small
+                    section "Disabling Auto-hide"
+                    
+                    echo -ne "  Dock..."
+                    defaults write com.apple.dock autohide -bool false
+                    defaults delete com.apple.dock autohide-delay 2>/dev/null || true
+                    defaults delete com.apple.dock autohide-time-modifier 2>/dev/null || true
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    
+                    echo -ne "  Menu Bar..."
+                    defaults write NSGlobalDomain _HIHideMenuBar -bool false
+                    echo -e " ${C_GREEN}✓${C_RESET}"
+                    
+                    killall Dock 2>/dev/null || true
+                    
+                    # Update settings
+                    sed -i '' 's/AUTOHIDE_DOCK="true"/AUTOHIDE_DOCK="false"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    sed -i '' 's/AUTOHIDE_MENUBAR="true"/AUTOHIDE_MENUBAR="false"/' "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+                    
+                    echo ""
+                    msg_success "Auto-hide disabled for Dock and Menu Bar"
+                    echo -e "  ${C_DIM}Note: Menu bar may require logout${C_RESET}"
+                    ;;
+                *)
+                    msg_error "Usage: macarchy system all <on|off>"
+                    ;;
+            esac
+            ;;
+            
+        *)
+            msg_error "Unknown target: $target"
+            echo -e "  ${C_DIM}Options: dock, menubar, all${C_RESET}"
+            return 1
+            ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: reset
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_reset() {
+    local force="${1:-}"
+    local defaults_dir="$MACARCHY_DIR/defaults"
+    local themes_dir="$MACARCHY_DIR/themes"
+    local config_dir="$MACARCHY_DIR/config"
+    local backup_dir="$MACARCHY_DIR/backups/reset-$(date +%Y%m%d-%H%M%S)"
+    
+    print_logo_small
+    section "Restore Default Configuration"
+    
+    # Check if defaults exist
+    if [[ ! -f "$defaults_dir/settings.sh" ]]; then
+        msg_error "Default settings not found at $defaults_dir/settings.sh"
+        return 1
+    fi
+    
+    # Get default theme name
+    local default_theme="orange"
+    if [[ -f "$defaults_dir/DEFAULT_THEME" ]]; then
+        default_theme=$(cat "$defaults_dir/DEFAULT_THEME" | tr -d '[:space:]')
+    fi
+    
+    if [[ ! -f "$themes_dir/${default_theme}.sh" ]]; then
+        msg_error "Default theme not found: $default_theme"
+        return 1
+    fi
+    
+    # Confirmation prompt (unless --force)
+    if [[ "$force" != "--force" ]] && [[ "$force" != "-f" ]]; then
+        echo ""
+        echo -e "  ${C_YELLOW}⚠${C_RESET}  This will reset your configuration to defaults:"
+        echo ""
+        echo -e "     ${C_DIM}•${C_RESET} Settings → Default Macarchy settings"
+        echo -e "     ${C_DIM}•${C_RESET} Theme    → ${C_BOLD}$default_theme${C_RESET}"
+        echo ""
+        echo -e "  ${C_DIM}Your current config will be backed up.${C_RESET}"
+        echo ""
+        read -r -p "   Continue? [y/N] " response
+        
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            echo ""
+            msg_info "Reset cancelled"
+            return 0
+        fi
+    fi
+    
+    echo ""
+    
+    # Create backup
+    mkdir -p "$backup_dir"
+    
+    echo -ne "  Backing up current config..."
+    if [[ -f "$config_dir/settings.sh" ]]; then
+        cp "$config_dir/settings.sh" "$backup_dir/"
+    fi
+    if [[ -f "$config_dir/theme.sh" ]]; then
+        cp "$config_dir/theme.sh" "$backup_dir/"
+    fi
+    echo -e " ${C_GREEN}✓${C_RESET}"
+    msg_step "Saved to ${C_DIM}$backup_dir${C_RESET}"
+    
+    # Restore default settings
+    echo -ne "  Restoring default settings..."
+    cp "$defaults_dir/settings.sh" "$config_dir/settings.sh"
+    echo -e " ${C_GREEN}✓${C_RESET}"
+    
+    # Restore default theme
+    echo -ne "  Restoring default theme ${C_DIM}($default_theme)${C_RESET}..."
+    cp "$themes_dir/${default_theme}.sh" "$config_dir/theme.sh"
+    echo -e " ${C_GREEN}✓${C_RESET}"
+    
+    # Apply configuration
+    section "Applying Default Configuration"
+    
+    # Source configs
+    source "$MACARCHY_DIR/config/theme.sh" 2>/dev/null || true
+    source "$MACARCHY_DIR/config/settings.sh" 2>/dev/null || true
+    
+    for module in $(get_modules); do
+        if module_enabled "$module" && load_module "$module"; then
+            echo -ne "  Applying to ${C_BOLD}$module${C_RESET}..."
+            module_apply_theme
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        fi
+    done
+    
+    section "Reloading Services"
+    
+    for module in $(get_modules); do
+        if module_enabled "$module" && load_module "$module"; then
+            echo -ne "  Reloading ${C_BOLD}$module${C_RESET}..."
+            module_reload
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        fi
+    done
+    
+    echo ""
+    msg_success "Defaults restored!"
+    echo ""
+    echo -e "  ${C_DIM}Backup: $backup_dir${C_RESET}"
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND: update
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_update() {
+    print_logo_small
+    section "Updating Macarchy"
+    
+    # Update repo if git
+    if [[ -d "$MACARCHY_DIR/.git" ]]; then
+        echo -ne "  Pulling latest changes..."
+        cd "$MACARCHY_DIR"
+        git pull origin main &>/dev/null && echo -e " ${C_GREEN}✓${C_RESET}" || echo -e " ${C_YELLOW}skipped${C_RESET}"
+    fi
+    
+    section "Updating Dependencies"
+    
+    for module in $(get_modules); do
+        if load_module "$module" && module_is_installed; then
+            echo -ne "  Updating ${C_BOLD}$module${C_RESET}..."
+            brew upgrade "$MODULE_BREW_PACKAGE" &>/dev/null || true
+            echo -e " ${C_GREEN}✓${C_RESET}"
+        fi
+    done
+    
+    # Reload
+    cmd_apply
+    
+    echo ""
+    msg_success "Update complete!"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+main() {
+    # Export MACARCHY_DIR for modules
+    export MACARCHY_DIR
+    
+    local command="${1:-help}"
+    shift 2>/dev/null || true
+    
+    case "$command" in
+        # Service commands
+        start)      cmd_start "$@" ;;
+        stop)       cmd_stop "$@" ;;
+        restart)    cmd_restart "$@" ;;
+        status)     cmd_status "$@" ;;
+        
+        # Configuration
+        apply|reload)  cmd_apply "$@" ;;
+        theme)         cmd_theme "$@" ;;
+        wallpaper)     cmd_wallpaper "$@" ;;
+        config)        cmd_config "$@" ;;
+        edit)          cmd_edit "$@" ;;
+        
+        # Maintenance
+        doctor)     cmd_doctor "$@" ;;
+        update)     cmd_update "$@" ;;
+        reset)      cmd_reset "$@" ;;
+        system)     cmd_system "$@" ;;
+        
+        # Info
+        help|--help|-h)        cmd_help ;;
+        version|--version|-v)  cmd_version ;;
+        
+        *)
+            msg_error "Unknown command: $command"
+            echo ""
+            echo -e "  Run ${C_BOLD}macarchy help${C_RESET} for usage"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

@@ -1,0 +1,8 @@
+#!/bin/bash
+# Placeholder script - monitors aerospace window changes
+# This is a simplified version
+
+while true; do
+  sleep 1
+done
+

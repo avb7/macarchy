@@ -1,0 +1,111 @@
+#!/bin/bash
+
+source "$CONFIG_DIR/colors.sh" # Loads all defined colors
+source "$CONFIG_DIR/icons.sh" # Loads all defined icons
+
+ITEM_DIR="$CONFIG_DIR/items" # Directory where the items are configured
+PLUGIN_DIR="$CONFIG_DIR/plugins" # Directory where all the plugin scripts are stored
+
+FONT="SF Pro" # Needs to have Regular, Bold, Semibold, Heavy and Black variants
+PADDINGS=8 # All paddings use this value (icon, label, background)
+
+# Setting up and starting the helper bars (optional - commented out for now)
+# HELPER_DIR="$CONFIG_DIR/helpers"
+# killall helper 2> /dev/null
+# (cd $HELPER_DIR/helper && make)
+# $HELPER_DIR/helper/helper $HELPER_DIR/event_providers/aerospace_windows/bin/aerospace_windows &
+
+# Setting up the general bar appearance of the bar
+# Check mode and set bar accordingly
+MODE_FILE="$HOME/.config/sketchybar/.mode"
+if [ -f "$MODE_FILE" ] && [ "$(cat $MODE_FILE)" = "laptop" ]; then
+  BAR_COLOR_CURRENT=0x00000000
+  SHADOW_CURRENT=off
+  BORDER_WIDTH_CURRENT=0
+else
+  BAR_COLOR_CURRENT=$BAR_COLOR
+  SHADOW_CURRENT=on
+  BORDER_WIDTH_CURRENT=2
+fi
+
+bar=(
+  height=40
+  color=$BAR_COLOR_CURRENT
+  border_width=$BORDER_WIDTH_CURRENT
+  border_color=$BACKGROUND_2
+  shadow=$SHADOW_CURRENT
+  position=top
+  sticky=on
+  padding_right=10
+  padding_left=10
+  y_offset=10
+  margin=10
+  topmost=off
+)
+
+sketchybar --bar "${bar[@]}"
+
+# Setting up default values
+# Check mode for background drawing
+if [ -f "$MODE_FILE" ] && [ "$(cat $MODE_FILE)" = "laptop" ]; then
+  BG_DRAWING=off
+else
+  BG_DRAWING=on
+fi
+
+defaults=(
+  updates=when_shown
+  icon.font="$FONT:Bold:14.0"
+  icon.color=$ICON_COLOR
+  icon.padding_left=$PADDINGS
+  icon.padding_right=$PADDINGS
+  label.font="$FONT:Semibold:13.0"
+  label.color=$LABEL_COLOR
+  label.padding_left=$PADDINGS
+  label.padding_right=$PADDINGS
+  padding_right=5
+  padding_left=5
+  background.height=26
+  background.corner_radius=5
+  background.border_width=2
+  background.drawing=$BG_DRAWING
+  popup.background.border_width=2
+  popup.background.corner_radius=9
+  popup.background.border_color=$POPUP_BORDER_COLOR
+  popup.background.color=$POPUP_BACKGROUND_COLOR
+  popup.blur_radius=20
+  popup.background.shadow.drawing=on
+)
+
+sketchybar --default "${defaults[@]}"
+
+# Add Aerospace workspace change event
+sketchybar --add event aerospace_workspace_change
+
+# Left
+source "$ITEM_DIR/apple.sh"
+source "$ITEM_DIR/spaces.sh"
+source "$ITEM_DIR/front_app.sh"
+
+# Center
+source "$ITEM_DIR/spotify.sh"
+
+# Right (items appear right-to-left, so first item is rightmost)
+source "$ITEM_DIR/datetime.sh"
+source "$ITEM_DIR/wifi.sh"
+source "$ITEM_DIR/reload.sh"
+source "$ITEM_DIR/theme.sh"
+source "$ITEM_DIR/mode_toggle.sh"
+source "$ITEM_DIR/volume.sh"
+source "$ITEM_DIR/battery.sh"
+source "$ITEM_DIR/cpu.sh"
+# source "$ITEM_DIR/calendar.sh"
+# source "$ITEM_DIR/brew.sh"
+# source "$ITEM_DIR/github.sh"
+
+sketchybar --hotload on
+
+# Forcing all item scripts to run (never do this outside of sketchybarrc)
+sketchybar --update
+
+echo "sketchybar configuation loaded.."
