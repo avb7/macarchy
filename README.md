@@ -26,13 +26,13 @@ Macarchy combines [AeroSpace](https://github.com/nikitabobko/AeroSpace), [Sketch
 ## Quick Install
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/macarchy/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/avb7/macarchy/main/install.sh)"
 ```
 
 Or clone manually:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/macarchy.git ~/.macarchy
+git clone https://github.com/avb7/macarchy.git ~/.macarchy
 cd ~/.macarchy && ./install.sh
 ```
 

@@ -10,7 +10,7 @@ set -e
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-MACARCHY_REPO="https://github.com/YOUR_USERNAME/macarchy.git"
+MACARCHY_REPO="https://github.com/avb7/macarchy.git"
 MACARCHY_DIR="$HOME/.macarchy"
 BACKUP_DIR="$HOME/.macarchy-backup-$(date +%Y%m%d-%H%M%S)"
 MIN_MACOS_VERSION="14.0"
