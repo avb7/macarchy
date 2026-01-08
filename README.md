@@ -10,6 +10,15 @@
 ```
 
 **A modular tiling desktop environment for macOS.**
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/ced65090-badd-4801-b91b-f97a1080a4e1" width="45%" />
+  <img src="https://github.com/user-attachments/assets/fcf42893-3800-4ebc-8b22-1fc83c9de65f" width="45%" />
+</p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/702c792f-68cc-4ce7-b1fc-770002fb926d" width="45%" />
+  <img src="https://github.com/user-attachments/assets/47a124f5-0c2b-4cd6-b117-248acd139466" width="45%" />
+</p>
+
 
 Macarchy combines [AeroSpace](https://github.com/nikitabobko/AeroSpace), [SketchyBar](https://github.com/FelixKratz/SketchyBar), and [JankyBorders](https://github.com/FelixKratz/JankyBorders) into a cohesive, portable, and easily customizable desktop experience.
 
@@ -221,6 +230,11 @@ Built on:
 - [JankyBorders](https://github.com/FelixKratz/JankyBorders) by Felix Kratz
 
 Inspired by [webpro/dotfiles](https://github.com/webpro/dotfiles).
+
+> **Disclaimer**  
+> This is an experimental build tested only on macOS 15.6.1.  
+> The software is provided "as is", without any warranties, and the author is not liable for any damages, data loss, or other issues arising from its use.
+
 
 ## License
 
